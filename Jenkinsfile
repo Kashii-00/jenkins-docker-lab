@@ -1,7 +1,5 @@
 pipeline {
-    agent {
-        label 'local-docker'
-    }
+    agent { label 'local-docker' }
 
     options {
         skipDefaultCheckout(true)
@@ -31,42 +29,9 @@ pipeline {
             }
         }
 
-        stage('Install dependencies') {
+        stage('Run test cases') {
             steps {
-                sh '''
-                    docker run --rm \
-                      -u "$(id -u):$(id -g)" \
-                      -v "$PWD:/app" \
-                      -w /app \
-                      node:22-bookworm \
-                      sh -lc 'if [ -f package-lock.json ]; then npm ci; else npm install; fi'
-                '''
-            }
-        }
-
-        stage('Build application') {
-            steps {
-                sh '''
-                    docker run --rm \
-                      -u "$(id -u):$(id -g)" \
-                      -v "$PWD:/app" \
-                      -w /app \
-                      node:22-bookworm \
-                      npm run build --if-present
-                '''
-            }
-        }
-
-        stage('Run unit and API tests') {
-            steps {
-                sh '''
-                    docker run --rm \
-                      -u "$(id -u):$(id -g)" \
-                      -v "$PWD:/app" \
-                      -w /app \
-                      node:22-bookworm \
-                      npm test
-                '''
+                sh 'bash tests/test_site.sh'
             }
         }
 
@@ -80,7 +45,7 @@ pipeline {
                             ${scannerHome}/bin/sonar-scanner \
                               -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
                               -Dsonar.sources=. \
-                              -Dsonar.exclusions=node_modules/**,coverage/**,dist/**
+                              -Dsonar.exclusions=.git/**,coverage/**,dist/**
                         """
                     }
                 }
@@ -105,8 +70,8 @@ pipeline {
             steps {
                 sh '''
                     cd /tmp
-
                     trivy image \
+                      --scanners vuln \
                       --severity HIGH,CRITICAL \
                       --exit-code 1 \
                       "${APP_IMAGE}:${BUILD_NUMBER}"

@@ -10,6 +10,9 @@ pipeline {
     environment {
         APP_IMAGE = 'devsecops-app'
         SONAR_PROJECT_KEY = 'devsecops-app'
+        AWS_REGION = 'ap-southeast-1'
+        ECR_REGISTRY = '941017931809.dkr.ecr.ap-southeast-1.amazonaws.com'
+        ECR_REPOSITORY = 'devsecops-app'
     }
 
     stages {
@@ -25,6 +28,7 @@ pipeline {
                     whoami
                     docker --version
                     trivy --version
+                    aws --version
                 '''
             }
         }
@@ -42,10 +46,10 @@ pipeline {
 
                     withSonarQubeEnv('sonarqube-local') {
                         sh """
-                            ${scannerHome}/bin/sonar-scanner \
+                            "${scannerHome}/bin/sonar-scanner" \
                               -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
                               -Dsonar.sources=. \
-                              -Dsonar.exclusions=.git/**,coverage/**,dist/**
+                              '-Dsonar.exclusions=.git/**,coverage/**,dist/**'
                         """
                     }
                 }
@@ -62,14 +66,16 @@ pipeline {
 
         stage('Build Docker image') {
             steps {
-                sh 'docker build -t ${APP_IMAGE}:${BUILD_NUMBER} .'
+                sh 'docker build -t "${APP_IMAGE}:${BUILD_NUMBER}" .'
             }
         }
 
         stage('Trivy image security scan') {
             steps {
                 sh '''
+                    set -eu
                     cd /tmp
+
                     trivy image \
                       --scanners vuln \
                       --severity HIGH,CRITICAL \
@@ -78,11 +84,37 @@ pipeline {
                 '''
             }
         }
+
+        stage('Push image to ECR') {
+            steps {
+                sh '''#!/bin/bash
+                    set -euo pipefail
+
+                    ECR_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}"
+
+                    aws ecr get-login-password --region "${AWS_REGION}" |
+                      docker login --username AWS --password-stdin "${ECR_REGISTRY}"
+
+                    docker tag "${APP_IMAGE}:${BUILD_NUMBER}" \
+                      "${ECR_URI}:${BUILD_NUMBER}"
+
+                    docker push "${ECR_URI}:${BUILD_NUMBER}"
+
+                    echo "${ECR_URI}:${BUILD_NUMBER}" > image-uri.txt
+                '''
+
+                archiveArtifacts artifacts: 'image-uri.txt', fingerprint: true
+            }
+        }
     }
 
     post {
         always {
-            sh 'docker image rm "${APP_IMAGE}:${BUILD_NUMBER}" || true'
+            sh '''
+                docker image rm \
+                  "${APP_IMAGE}:${BUILD_NUMBER}" \
+                  "${ECR_REGISTRY}/${ECR_REPOSITORY}:${BUILD_NUMBER}" || true
+            '''
             cleanWs()
         }
     }
